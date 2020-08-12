@@ -79,6 +79,10 @@ class GroupMembership extends LicenseTypeBase implements ExistingRightsFromConfi
     /** @var \Drupal\group\Entity\Group $group */
     $group = \Drupal::service('entity_type.manager')->getStorage('group')->load($group_id);
 
+    if (empty($group)) {
+      return ExistingRightsResult::rightsDoNotExist();
+    }
+
     $userIsMember = $group->getMember($user) instanceof GroupMembershipEntity;
 
     return ExistingRightsResult::rightsExistIf(

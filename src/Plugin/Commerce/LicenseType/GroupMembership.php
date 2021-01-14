@@ -47,13 +47,19 @@ class GroupMembership extends LicenseTypeBase implements ExistingRightsFromConfi
    */
   public function grantLicense(LicenseInterface $license) {
 
-    /** @var \Drupal\group\Entity\Group $group */
+    /** @var \Drupal\group\Entity\GroupInterface $group */
     $group = $license->license_group->entity;
 
-    // Get the owner of the license and grant them group membership.
-    $owner = $license->getOwner();
+    if ($group instanceof \Drupal\group\Entity\GroupInterface) {
 
-    $group->addMember($owner);
+      // Get the owner of the license and grant them group membership.
+      $owner = $license->getOwner();
+
+      $group->addMember($owner);
+    }
+    else {
+      \Drupal::logger('commerce_license_group')->error("Couldn't get group for license " . $license->id());
+    }
   }
 
   /**

@@ -162,10 +162,13 @@ class GroupMembership extends LicenseTypeBase implements ExistingRightsFromConfi
 
     $fields['license_group'] = BundleFieldDefinition::create('entity_reference')
       ->setLabel(t('Group'))
-      ->setDescription(t('The group this product grants membershjp of.'))
+      ->setDescription(t('The group this product grants membership of.'))
       ->setCardinality(1)
       ->setRequired(TRUE)
       ->setSetting('target_type', 'group')
+      ->setDisplayOptions('form', [
+        'type' => 'options_select',
+      ])
       ->setDisplayOptions('view', [
         'label' => 'inline',
         'type' => 'entity_reference_label',

@@ -4,6 +4,7 @@ namespace Drupal\commerce_license_group\Plugin\Commerce\LicenseType;
 
 use Drupal\Core\Entity\EntityInterface;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Field\FieldStorageDefinitionInterface;
 use Drupal\user\UserInterface;
 use Drupal\entity\BundleFieldDefinition;
 use Drupal\commerce_license\Entity\LicenseInterface;
@@ -27,10 +28,17 @@ class GroupMembership extends LicenseTypeBase implements ExistingRightsFromConfi
    * {@inheritdoc}
    */
   public function buildLabel(LicenseInterface $license) {
+    /** Array of @var \Drupal\group\Entity\GroupInterface $groups */
+    $groups = $license->license_group->referencedEntities();
+    $group_labels = [];
+    foreach ($groups as $group) {
+      $group_labels[]= $group->label();
+    }
+    $group_labels = implode( ', ', $group_labels);
     $args = [
-      '@group' => $license->license_group->entity->label(),
+      '@group_labels' => $group_labels,
     ];
-    return $this->t('@group group membership license', $args);
+    return $this->t('Group/s membership licensed: @group_labels', $args);
   }
 
   /**
@@ -38,7 +46,7 @@ class GroupMembership extends LicenseTypeBase implements ExistingRightsFromConfi
    */
   public function defaultConfiguration() {
     return [
-      'license_group' => '',
+      'license_group' => [],
     ] + parent::defaultConfiguration();
   }
 
@@ -46,19 +54,19 @@ class GroupMembership extends LicenseTypeBase implements ExistingRightsFromConfi
    * {@inheritdoc}
    */
   public function grantLicense(LicenseInterface $license) {
-
-    /** @var \Drupal\group\Entity\GroupInterface $group */
-    $group = $license->license_group->entity;
-
-    if ($group instanceof \Drupal\group\Entity\GroupInterface) {
-
-      // Get the owner of the license and grant them group membership.
-      $owner = $license->getOwner();
-
-      $group->addMember($owner);
-    }
-    else {
-      \Drupal::logger('commerce_license_group')->error("Couldn't get group for license " . $license->id());
+    /** Array of @var \Drupal\group\Entity\GroupInterface $groups */
+    $groups = $license->license_group->referencedEntities();
+    
+    // Get the owner of the license and grant them group membership.
+    $owner = $license->getOwner();
+    
+    foreach ($groups as $group){
+      if ($group instanceof \Drupal\group\Entity\GroupInterface) {
+        $group->addMember($owner);
+      }
+      else {
+        \Drupal::logger('commerce_license_group')->error("Couldn't get group for license " . $license->id());
+      }
     }
   }
 
@@ -66,41 +74,45 @@ class GroupMembership extends LicenseTypeBase implements ExistingRightsFromConfi
    * {@inheritdoc}
    */
   public function revokeLicense(LicenseInterface $license) {
-
-    /** @var \Drupal\group\Entity\Group $group */
-    $group = $license->license_group->entity;
-
+    
+    /** Array of @var \Drupal\group\Entity\Group $groups */
+    $groups = $license->license_group->referencedEntities();
+    
     // Get the owner of the license and remove their group membership.
     $owner = $license->getOwner();
-
-    $group->removeMember($owner);
+    
+    foreach ($groups as $group){
+      $group->removeMember($owner);
+    }
   }
 
   /**
    * {@inheritdoc}
    */
   public function checkUserHasExistingRights(UserInterface $user) {
-    $group_id = $this->configuration['license_group'];
+    $group_ids = $this->configuration['license_group'];
 
-    /** @var \Drupal\group\Entity\Group $group */
-    $group = \Drupal::service('entity_type.manager')->getStorage('group')->load($group_id);
-
-    if (empty($group)) {
+    /** Array of @var \Drupal\group\Entity\Group $group */
+    $groups = \Drupal::service('entity_type.manager')->getStorage('group')->loadMultiple($group_ids);
+    
+    if (empty($groups)) {
       return ExistingRightsResult::rightsDoNotExist();
     }
-
-    $userIsMember = $group->getMember($user) instanceof GroupMembershipEntity;
-
-    return ExistingRightsResult::rightsExistIf(
-      $userIsMember,
-      $this->t("You are already a member of the @group-label group.", [
-        '@group-label' => $group->label(),
-      ]),
-      $this->t("User @user is already a member of the @group-label group.", [
-        '@user' => $user->getDisplayName(),
-        '@group-label' => $group->label(),
-      ])
-    );
+    
+    foreach ($groups as $id => $group){
+      $userIsMember = $group->getMember($user) instanceof GroupMembershipEntity;
+      
+      return ExistingRightsResult::rightsExistIf(
+        $userIsMember,
+        $this->t("You are already a member of the @group-label group.", [
+          '@group-label' => $group->label(),
+        ]),
+        $this->t("User @user is already a member of the @group-label group.", [
+          '@user' => $user->getDisplayName(),
+          '@group-label' => $group->label(),
+        ])
+      );
+    }
   }
 
   /**
@@ -109,10 +121,15 @@ class GroupMembership extends LicenseTypeBase implements ExistingRightsFromConfi
   public function alterEntityOwnerForm(&$form, FormStateInterface $form_state, $form_id, LicenseInterface $license, EntityInterface $form_entity) {
 
     if (preg_match('/^group_content_(.+)-group_membership_delete_form$/', $form_id)) {
-
-      /** @var \Drupal\group\Entity\GroupContent $form_entity */
-      if ($form_entity->getGroup()->id() == $license->license_group->entity->id()) {
-        \Drupal::messenger()->addWarning("This group membership is granted by a license. It should not be removed manually.");
+      
+      /** Array of @var \Drupal\group\Entity\Group $group */
+      $groups = $license->license_group->referencedEntities();
+      
+      foreach ($groups as $group) {
+        /** @var \Drupal\group\Entity\GroupContent $form_entity */
+        if ($form_entity->getGroup()->id() == $group->id()) {
+          \Drupal::messenger()->addWarning("This group membership is granted by a license. It should not be removed manually.");
+        }
       }
     }
   }
@@ -125,12 +142,14 @@ class GroupMembership extends LicenseTypeBase implements ExistingRightsFromConfi
 
     $options = [];
     foreach ($groups as $id => $group) {
-      $options[$id] = $group->label();
+      $options[$group->getGroupType()->label()][$id] = $group->label();
     }
 
     $form['license_group'] = [
-      '#type' => 'radios',
-      '#title' => $this->t('Group membership to purchase'),
+      '#type' => 'select',
+      '#multiple' => TRUE,
+      '#size' => 15,
+      '#title' => $this->t('Select the group/s membership that will be purchased'),
       '#options' => $options,
       '#default_value' => $this->configuration['license_group'],
       '#required' => TRUE,
@@ -161,11 +180,14 @@ class GroupMembership extends LicenseTypeBase implements ExistingRightsFromConfi
     $fields = parent::buildFieldDefinitions();
 
     $fields['license_group'] = BundleFieldDefinition::create('entity_reference')
-      ->setLabel(t('Group'))
-      ->setDescription(t('The group this product grants membershjp of.'))
-      ->setCardinality(1)
+      ->setLabel(t('Group/s'))
+      ->setDescription(t('The group/s this product grants membership of.'))
+      ->setCardinality(FieldStorageDefinitionInterface::CARDINALITY_UNLIMITED)
       ->setRequired(TRUE)
       ->setSetting('target_type', 'group')
+      ->setDisplayOptions('form', [
+         'type' => 'options_select',
+      ])
       ->setDisplayOptions('view', [
         'label' => 'inline',
         'type' => 'entity_reference_label',
